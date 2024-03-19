@@ -4,13 +4,43 @@ class TokenNotFoundError(Exception):
     pass
 
 
-class PracticumAPINotAvailable(Exception):
+class EndpointError(Exception):
     """Ошибка доступа к API Практикума."""
 
     pass
 
 
-class ResponseIsNotValid(Exception):
+class ResponseNotValidError(Exception):
+    """Ошибка при получении данных от API."""
+
+    pass
+
+
+class ResponseTypeError(TypeError):
     """Ошибка соответствия формата ответа документации."""
+
+    pass
+
+
+class MessageNotSentError(Exception):
+    """Ошибка отправки сообщения."""
+
+    pass
+
+
+class HomeworkListEmptyError(IndexError):
+    """Ошибка пустого листа домашнего заданию."""
+
+    pass
+
+
+class HomeworkVerdictError(Exception):
+    """Ошибка отсутсвия информации о полученном статусе."""
+
+    pass
+
+
+class NetworkError(Exception):
+    """Ошибка доступа сети."""
 
     pass
