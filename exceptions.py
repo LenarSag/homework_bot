@@ -1,5 +1,5 @@
 class TokenNotFoundError(Exception):
-    """Ошибка доступности токена в .env."""
+    """Ошибка наличия токена в .env."""
 
     pass
 
@@ -29,7 +29,7 @@ class MessageNotSentError(Exception):
 
 
 class HomeworkListEmptyError(IndexError):
-    """Ошибка пустого листа домашнего заданию."""
+    """Ошибка пустого листа домашнего задания."""
 
     pass
 

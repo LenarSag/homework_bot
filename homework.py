@@ -3,6 +3,7 @@ import sys
 import logging
 import time
 from http import HTTPStatus
+from typing import Union
 
 import requests
 from dotenv import load_dotenv
@@ -28,23 +29,32 @@ HOMEWORK_VERDICTS = {
 }
 
 
+logger = logging.getLogger(__name__)
+
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s: %(message)s",
+    format=(
+        "%(filename)s:%(lineno)d #%(levelname)s "
+        "[%(asctime)s] - %(name)s - %(message)s"
+    ),
     level=logging.DEBUG,
     handlers=[
-        logging.FileHandler("log.txt", encoding="UTF-8"),
+        logging.FileHandler("log.txt", encoding="UTF-8", mode='w'),
         logging.StreamHandler(sys.stdout),
     ],
 )
 
 
-def check_tokens(tokens_to_check):
-    """Проверяем переменные окружения, необходимых для работы программы."""
-    for token in tokens_to_check:
-        if token is None:
-            logging.critical("Отсутствует обязательная переменная окружения")
+def check_tokens(tokens_to_check: dict[str, Union[str, None]]) -> None:
+    """Проверяем переменные окружения, необходимыe для работы программы."""
+    for token, token_value in tokens_to_check.items():
+        if token_value is None:
+            logging.critical(
+                "Отсутствует обязательная переменная "
+                f"{token.upper()} окружения"
+            )
             raise exceptions.TokenNotFoundError(
-                "Отсутствует обязательная переменная окружения"
+                "Отсутствует обязательная переменная "
+                f"{token.upper()} окружения"
             )
 
 
@@ -54,7 +64,9 @@ def send_message(bot, message):
         bot.send_message(TELEGRAM_CHAT_ID, message)
         logging.debug(f"Сообщение {message} успешно отправлено!")
     except Exception as error:
-        raise exceptions.MessageNotSentError(f"{error}")
+        raise exceptions.MessageNotSentError(
+            f"При отправке сообщения в телеграм произошла ошибка: {error}"
+        )
 
 
 def get_api_answer(timestamp):
@@ -72,7 +84,12 @@ def get_api_answer(timestamp):
                 f"Сбой в работе программы: Эндпоинт {ENDPOINT} недоступен."
                 f"Код ответа API: {status_code}"
             )
-        return homework_statuses.json()
+        try:
+            return homework_statuses.json()
+        except requests.exceptions.InvalidJSONError as error:
+            raise exceptions.ResponseTypeError(
+                f"Невалидный формат JSON от API {error}"
+            )
     except requests.exceptions.RequestException as error:
         raise exceptions.NetworkError(f"Проблемы с соединением, {error}")
 
@@ -83,65 +100,82 @@ def check_response(response):
         raise exceptions.ResponseTypeError("Ответ должен быть в формате dict")
 
     if "code" in response:
+        code = response.get("code")
         message = response.get("message")
-        raise exceptions.ResponseNotValidError(f"{message}")
+        raise exceptions.ResponseNotValidError(
+            f"В ответе API содержится сообщение об ошибке {code} "
+            f"с текстом {message}"
+        )
 
     homeworks = response.get("homeworks")
+    if homeworks is None:
+        raise exceptions.ResponseNotValidError(
+            "В ответе API отсутствуют данные по ключу 'homewokrs'"
+        )
+
     if not isinstance(homeworks, list):
         raise exceptions.ResponseTypeError(
-            "Ключ Homeworks должен быть списком"
+            "Ключ 'homeworks' должен быть списком"
         )
-    try:
+
+    if homeworks:
         return homeworks[0]
-    except IndexError:
-        raise exceptions.HomeworkListEmptyError(
-            "За указанный период данные не найдены"
-        )
+    raise exceptions.HomeworkListEmptyError(
+        "За указанный период данные не найдены"
+    )
 
 
 def parse_status(homework):
     """Проверка статуса домашнего задания."""
+    if not isinstance(homework, dict):
+        raise exceptions.ResponseTypeError(
+            "Переменная 'homework' должна быть в формате dict"
+        )
+
     homework_name = homework.get("homework_name")
     if homework_name is None:
         raise exceptions.ResponseTypeError("Отсутствует ключ 'homework_name'")
 
     homework_status = homework.get("status")
-    verdict = HOMEWORK_VERDICTS.get(homework_status)
-    if verdict is None:
-        raise exceptions.HomeworkVerdictError(
-            "Неожиданный статус домашней работы, обнаруженный в ответе API"
+    if homework_status is None:
+        raise exceptions.ResponseTypeError(
+            "Отсутствует ключ 'homework_status'"
         )
+    if homework_status not in HOMEWORK_VERDICTS.keys():
+        raise exceptions.HomeworkVerdictError(
+            "Неожиданный статус домашней работы, полученный в ответе API"
+        )
+    verdict = HOMEWORK_VERDICTS.get(homework_status)
 
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
     """Основная логика работы бота."""
-    tokens = (PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+    tokens = {
+        "practikum_token": PRACTICUM_TOKEN,
+        "telegram_token": TELEGRAM_TOKEN,
+        "telegram_chat_id": TELEGRAM_CHAT_ID,
+    }
     check_tokens(tokens)
 
-    current_status = None
     prev_status = None
 
     current_alarm = None
     prev_alarm = None
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    timestamp = int(time.time())
 
     while True:
-        timestamp = int(time.time())
         try:
             response = get_api_answer(timestamp)
             homework_info = check_response(response)
             message = parse_status(homework_info)
 
-            if message:
-                current_status = message
-                if current_status != prev_status:
-                    prev_status = current_status
-                    send_message(bot, message)
-            else:
-                logging.debug("Отсутствие в ответе новых статусов")
+            if message != prev_status:
+                prev_status = message
+                send_message(bot, message)
 
         except exceptions.MessageNotSentError:
             logging.error("Сбой при отправке сообщения в Telegram")
