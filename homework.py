@@ -3,7 +3,7 @@ import sys
 import logging
 import time
 from http import HTTPStatus
-from typing import Union
+from typing import Optional
 
 import requests
 from dotenv import load_dotenv
@@ -29,8 +29,6 @@ HOMEWORK_VERDICTS = {
 }
 
 
-logger = logging.getLogger(__name__)
-
 logging.basicConfig(
     format=(
         "%(filename)s:%(lineno)d #%(levelname)s "
@@ -43,26 +41,31 @@ logging.basicConfig(
     ],
 )
 
+logger = logging.getLogger(__name__)
 
-def check_tokens(tokens_to_check: dict[str, Union[str, None]]) -> None:
+
+def check_tokens(tokens_to_check: dict[str, Optional[str]]) -> None:
     """Проверяем переменные окружения, необходимыe для работы программы."""
+    missing_tokens = []
     for token, token_value in tokens_to_check.items():
         if token_value is None:
-            logging.critical(
-                "Отсутствует обязательная переменная "
-                f"{token.upper()} окружения"
+            missing_tokens.append(f"{token.upper()}")
+            logger.critical(
+                "Отсутствует обязательная переменная окружения"
+                f"{token.upper()}."
             )
-            raise exceptions.TokenNotFoundError(
-                "Отсутствует обязательная переменная "
-                f"{token.upper()} окружения"
-            )
+    if missing_tokens:
+        raise exceptions.TokenNotFoundError(
+            "Отсутствует одна или несколько переменных окружения: "
+            f"{', '.join(missing_tokens)}."
+        )
 
 
 def send_message(bot, message):
     """Отправка статус домашней работы либо ошибки в телеграмм."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logging.debug(f"Сообщение {message} успешно отправлено!")
+        logger.debug(f"Сообщение {message} успешно отправлено!")
     except Exception as error:
         raise exceptions.MessageNotSentError(
             f"При отправке сообщения в телеграм произошла ошибка: {error}"
@@ -84,12 +87,11 @@ def get_api_answer(timestamp):
                 f"Сбой в работе программы: Эндпоинт {ENDPOINT} недоступен."
                 f"Код ответа API: {status_code}"
             )
-        try:
-            return homework_statuses.json()
-        except requests.exceptions.InvalidJSONError as error:
-            raise exceptions.ResponseTypeError(
-                f"Невалидный формат JSON от API {error}"
-            )
+        return homework_statuses.json()
+    except requests.exceptions.InvalidJSONError as error:
+        raise exceptions.ResponseTypeError(
+            f"Невалидный формат JSON от API {error}"
+        )
     except requests.exceptions.RequestException as error:
         raise exceptions.NetworkError(f"Проблемы с соединением, {error}")
 
@@ -141,7 +143,7 @@ def parse_status(homework):
         raise exceptions.ResponseTypeError(
             "Отсутствует ключ 'homework_status'"
         )
-    if homework_status not in HOMEWORK_VERDICTS.keys():
+    if homework_status not in HOMEWORK_VERDICTS:
         raise exceptions.HomeworkVerdictError(
             "Неожиданный статус домашней работы, полученный в ответе API"
         )
@@ -160,8 +162,6 @@ def main():
     check_tokens(tokens)
 
     prev_status = None
-
-    current_alarm = None
     prev_alarm = None
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
@@ -178,17 +178,16 @@ def main():
                 send_message(bot, message)
 
         except exceptions.MessageNotSentError:
-            logging.error("Сбой при отправке сообщения в Telegram")
+            logger.error("Сбой при отправке сообщения в Telegram")
 
         except exceptions.HomeworkListEmptyError as error:
-            logging.debug(f"{error}")
+            logger.debug(f"{error}")
 
         except Exception as error:
             message = f"Сбой в работе программы: {error}"
-            logging.error(message)
-            current_alarm = message
-            if current_alarm != prev_alarm:
-                prev_alarm = current_alarm
+            logger.error(message)
+            if message != prev_alarm:
+                prev_alarm = message
                 send_message(bot, message)
 
         finally:
